@@ -1,4 +1,5 @@
 const https = require('https');
+const { URL } = require('url');
 
 // Generate a unique ID for each request
 const generateId = () => {
@@ -23,8 +24,40 @@ const makeRequest = (options, body = null) => {
     });
 };
 
+// Helper to fetch the current Fe Version from Duck.ai homepage
+const getFeVersion = async () => {
+    try {
+        const res = await makeRequest({
+            hostname: 'duck.ai',
+            path: '/',
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
+        
+        // Look for the script that defines window.__NEXT_DATA__ or similar
+        // Duck.ai injects a version string into a script tag or meta tag
+        const match = res.data.match(/x-fe-version[^>]*=["']([^"']+)["']/i);
+        if (match) return match[1];
+        
+        // Fallback: Try to find version in script src
+        const scriptMatch = res.data.match(/scraper_[\w-]+\.js/);
+        if (scriptMatch) {
+             // Extract version from filename if present
+             const versionMatch = scriptMatch[0].match(/scraper_([\w-]+)\.js/);
+             if (versionMatch) return `scraper_${versionMatch[1]}`;
+        }
+
+        // Last resort fallback if specific parsing fails
+        return "scraper_20260825_133734_ET-ea4548e57b2e941ae25474516138826d8bb4d6ab";
+    } catch (e) {
+        console.error("Fe Version Fetch Error:", e);
+        return "scraper_20260825_133734_ET-ea4548e57b2e941ae25474516138826d8bb4d6ab";
+    }
+};
+
 exports.handler = async (event, context) => {
-    // CORS Headers
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': '*',
@@ -38,23 +71,30 @@ exports.handler = async (event, context) => {
 
     try {
         const { prompt, messages, model } = JSON.parse(event.body || '{}');
-        
-        // Default model if not specified
         const targetModel = model || "llama-3.1-70b";
-        
-        // Base headers mimicking a browser
+
+        // 1. Get dynamic Fe Version
+        const feVersion = await getFeVersion();
+
+        // 2. Base Headers
         const baseHeaders = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/event-stream',
             'Content-Type': 'application/json',
             'X-Ddg-Journey-Id': generateId(),
+            'X-Fe-Version': feVersion,
+            'X-Vqd-Accept': '1',
             'Referer': 'https://duck.ai/',
             'Origin': 'https://duck.ai',
             'Sec-Ch-Ua': '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
             'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"'
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin'
         };
 
+        // 3. Send Chat Request
         const response = await makeRequest({
             hostname: 'duck.ai',
             path: '/duckchat/v1/chat',
@@ -64,24 +104,25 @@ exports.handler = async (event, context) => {
             prompt: prompt,
             model: targetModel,
             messages: messages || [],
-            conversation_id: null
+            conversation_id: null,
+            attachments: []
         });
 
-        // Parse SSE (Server-Sent Events)
+        // 4. Parse SSE
         const lines = response.data.split('\n');
         let fullResponse = "";
         
         for (const line of lines) {
             if (line.startsWith('data: ')) {
-                const jsonStr = line.slice(6);
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr) continue;
                 try {
                     const parsed = JSON.parse(jsonStr);
-                    // 'message' type contains the actual text chunks
                     if (parsed.type === 'message' && parsed.delta) {
                         fullResponse += parsed.delta;
                     }
                 } catch (e) {
-                    // Ignore parse errors on partial chunks
+                    // Ignore partial JSON
                 }
             }
         }
@@ -91,7 +132,8 @@ exports.handler = async (event, context) => {
             headers,
             body: JSON.stringify({
                 success: true,
-                response: fullResponse
+                response: fullResponse,
+                model: targetModel
             })
         };
 
