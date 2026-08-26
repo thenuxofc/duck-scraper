@@ -1,0 +1,13 @@
+{
+  "name": "duck-ai-scraper",
+  "version": "1.0.0",
+  "description": "Duck.ai Scraper with JSON output and Memory",
+  "main": "functions/scrape.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {}
+}
