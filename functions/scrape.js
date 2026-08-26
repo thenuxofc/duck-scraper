@@ -37,14 +37,12 @@ const getFeVersion = async () => {
         });
         
         // Look for the script that defines window.__NEXT_DATA__ or similar
-        // Duck.ai injects a version string into a script tag or meta tag
         const match = res.data.match(/x-fe-version[^>]*=["']([^"']+)["']/i);
         if (match) return match[1];
         
         // Fallback: Try to find version in script src
         const scriptMatch = res.data.match(/scraper_[\w-]+\.js/);
         if (scriptMatch) {
-             // Extract version from filename if present
              const versionMatch = scriptMatch[0].match(/scraper_([\w-]+)\.js/);
              if (versionMatch) return `scraper_${versionMatch[1]}`;
         }
@@ -71,7 +69,9 @@ exports.handler = async (event, context) => {
 
     try {
         const { prompt, messages, model } = JSON.parse(event.body || '{}');
-        const targetModel = model || "llama-3.1-70b";
+        
+        // Use the correct model identifier
+        const targetModel = model || "llama-3.1-70b-instruct";
 
         // 1. Get dynamic Fe Version
         const feVersion = await getFeVersion();
@@ -95,6 +95,7 @@ exports.handler = async (event, context) => {
         };
 
         // 3. Send Chat Request
+        // We need to ensure the message format matches what Duck.ai expects
         const response = await makeRequest({
             hostname: 'duck.ai',
             path: '/duckchat/v1/chat',
@@ -103,7 +104,8 @@ exports.handler = async (event, context) => {
         }, {
             prompt: prompt,
             model: targetModel,
-            messages: messages || [],
+            // Ensure messages are in the correct format: { role: 'user', content: '...' }
+            messages: messages || [], 
             conversation_id: null,
             attachments: []
         });
@@ -111,6 +113,7 @@ exports.handler = async (event, context) => {
         // 4. Parse SSE
         const lines = response.data.split('\n');
         let fullResponse = "";
+        let hasContent = false;
         
         for (const line of lines) {
             if (line.startsWith('data: ')) {
@@ -120,7 +123,10 @@ exports.handler = async (event, context) => {
                     const parsed = JSON.parse(jsonStr);
                     if (parsed.type === 'message' && parsed.delta) {
                         fullResponse += parsed.delta;
+                        hasContent = true;
                     }
+                    // Log other types for debugging if needed
+                    // if (parsed.type === 'search_results') console.log('Search results:', parsed);
                 } catch (e) {
                     // Ignore partial JSON
                 }
