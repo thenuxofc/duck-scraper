@@ -1,5 +1,4 @@
 const https = require('https');
-const { URL } = require('url');
 
 // Generate a unique ID for each request
 const generateId = () => {
@@ -36,7 +35,7 @@ const getFeVersion = async () => {
             }
         });
         
-        // Look for the script that defines window.__NEXT_DATA__ or similar
+        // Try to extract the script version
         const match = res.data.match(/x-fe-version[^>]*=["']([^"']+)["']/i);
         if (match) return match[1];
         
@@ -47,7 +46,6 @@ const getFeVersion = async () => {
              if (versionMatch) return `scraper_${versionMatch[1]}`;
         }
 
-        // Last resort fallback if specific parsing fails
         return "scraper_20260825_133734_ET-ea4548e57b2e941ae25474516138826d8bb4d6ab";
     } catch (e) {
         console.error("Fe Version Fetch Error:", e);
@@ -70,8 +68,8 @@ exports.handler = async (event, context) => {
     try {
         const { prompt, messages, model } = JSON.parse(event.body || '{}');
         
-        // Use the correct model identifier
-        const targetModel = model || "llama-3.1-70b-instruct";
+        // Use the specific model requested
+        const targetModel = model || "gpt-5.6-luna";
 
         // 1. Get dynamic Fe Version
         const feVersion = await getFeVersion();
@@ -95,7 +93,6 @@ exports.handler = async (event, context) => {
         };
 
         // 3. Send Chat Request
-        // We need to ensure the message format matches what Duck.ai expects
         const response = await makeRequest({
             hostname: 'duck.ai',
             path: '/duckchat/v1/chat',
@@ -104,7 +101,6 @@ exports.handler = async (event, context) => {
         }, {
             prompt: prompt,
             model: targetModel,
-            // Ensure messages are in the correct format: { role: 'user', content: '...' }
             messages: messages || [], 
             conversation_id: null,
             attachments: []
@@ -125,8 +121,6 @@ exports.handler = async (event, context) => {
                         fullResponse += parsed.delta;
                         hasContent = true;
                     }
-                    // Log other types for debugging if needed
-                    // if (parsed.type === 'search_results') console.log('Search results:', parsed);
                 } catch (e) {
                     // Ignore partial JSON
                 }
