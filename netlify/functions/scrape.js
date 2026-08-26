@@ -1,5 +1,6 @@
 const https = require('https');
 
+// Generate a unique ID for each request
 const generateId = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
         const r = Math.random() * 16 | 0;
@@ -8,6 +9,7 @@ const generateId = () => {
     });
 };
 
+// Helper for HTTPS requests
 const makeRequest = (options, body = null) => {
     return new Promise((resolve, reject) => {
         const req = https.request(options, (res) => {
@@ -22,8 +24,11 @@ const makeRequest = (options, body = null) => {
 };
 
 exports.handler = async (event, context) => {
+    // CORS Headers
     const headers = {
         'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Content-Type': 'application/json'
     };
 
@@ -32,28 +37,37 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        const { prompt, messages } = JSON.parse(event.body || '{}');
-        const journeyId = generateId();
+        const { prompt, messages, model } = JSON.parse(event.body || '{}');
         
+        // Default model if not specified
+        const targetModel = model || "llama-3.1-70b";
+        
+        // Base headers mimicking a browser
+        const baseHeaders = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/event-stream',
+            'Content-Type': 'application/json',
+            'X-Ddg-Journey-Id': generateId(),
+            'Referer': 'https://duck.ai/',
+            'Origin': 'https://duck.ai',
+            'Sec-Ch-Ua': '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"'
+        };
+
         const response = await makeRequest({
             hostname: 'duck.ai',
             path: '/duckchat/v1/chat',
             method: 'POST',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/event-stream',
-                'Content-Type': 'application/json',
-                'X-Ddg-Journey-Id': journeyId,
-                'Referer': 'https://duck.ai/',
-                'Origin': 'https://duck.ai'
-            }
+            headers: baseHeaders
         }, {
             prompt: prompt,
-            model: "llama-3.1-70b",
+            model: targetModel,
             messages: messages || [],
             conversation_id: null
         });
 
+        // Parse SSE (Server-Sent Events)
         const lines = response.data.split('\n');
         let fullResponse = "";
         
@@ -62,23 +76,34 @@ exports.handler = async (event, context) => {
                 const jsonStr = line.slice(6);
                 try {
                     const parsed = JSON.parse(jsonStr);
+                    // 'message' type contains the actual text chunks
                     if (parsed.type === 'message' && parsed.delta) {
                         fullResponse += parsed.delta;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    // Ignore parse errors on partial chunks
+                }
             }
         }
 
         return {
             statusCode: 200,
             headers,
-            body: JSON.stringify({ response: fullResponse })
+            body: JSON.stringify({
+                success: true,
+                response: fullResponse
+            })
         };
+
     } catch (error) {
+        console.error("Scrape Error:", error);
         return {
             statusCode: 500,
             headers,
-            body: JSON.stringify({ error: error.message })
+            body: JSON.stringify({
+                success: false,
+                error: error.message
+            })
         };
     }
 };
